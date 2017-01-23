@@ -1,0 +1,180 @@
+---
+title: "Coding Problem 001 - DM"
+author: "Avi"
+date: "20 November 2016"
+output: html_document
+---
+
+```{r global_options, echo=FALSE}
+knitr::opts_chunk$set(echo=TRUE, warning=FALSE, message=FALSE)
+```
+
+We will do this entire project in 3 main parts
+
+1. Every character of every word in the dictionary is hashed and a word-letter matrix is created
+
+2. Create all functions required to check it against the word letter matrix and extract all words that meet the conditions
+
+3. Take user input loop them through the functions and print to text files. The user can give a txt as an input for different set of tiles in each line (Not restricted by 7 or by number of lines). The output shall be in text file for each set of tiles in the format "output_line#.txt" where line# indicates the line in the user given tile file.
+
+### Load required packages ###
+```{r }
+# load the quanteda package. This is Quantitative Analysis of Textual Data package
+install.packages("quanteda") # Install package if not installed already
+require(quanteda) # Load package
+```
+
+## Part 1 - Creating a word letter matrix ##
+```{r }
+#Read the given dictionary as a CSV, no header, encoding us UTF-8
+dict<-read.csv("~/Documents/UCD/BA Prac/DM/dictionary.txt",header = F,encoding = "UTF-8")
+
+#Check the head and tail to verify the dictionary has been loaded properly
+head(dict)
+tail(dict)
+
+#Unlist and convert the dictionary into character strings
+dict<-as.character(unlist(dict))
+
+#List the characters and symbols that needs to be extracted out of the dictionary -letter (a to z) along with characters '/',".",'-',"'"
+charctrs<-c(letters,'/',".",'-',"'")
+```
+
+
+### Create a function to extract the characters from a word and convert them into a matrix ###
+
+Here we are creating a function to pull words and put them into a word letter matrix. Every letter in the word along with '/',".",'-',"'" as defined above will be converted into a matrix which can be referenced later.
+
+```{r }
+WordLetterMatrix <- function(words, letters){
+  
+  # Create rownames for each word as the text string itself
+  names(words) <- words
+  
+  # Create a dictionary with the alphabets and characters specified before
+  letters <- quanteda::dictionary(sapply(letters, list))
+  
+  # There are parts of speech (verb, noun, adjectives etc.) speicfied for some words within parenthesis. The gsub function below scans through every string and omits any parenthesis or anything inside it from the word. We have already retained the word with the parenthesis as part of rownames.
+  words<-gsub("\\(.*\\)","",words)
+ 
+  # Tokenize every string into individual characters
+  chr.tokens <- quanteda::tokenize(words, what = "character")
+  
+  # Create a matrix using the tokens with the letters(characters) as its columns
+  wtm <- dfm(chr.tokens, dictionary = letters, valuetype = "fixed",verbose = FALSE)
+  
+  # convert to dense matrix and also remove dimnames
+  wtm <- as.matrix(wtm)
+  names(dimnames(wtm)) <- NULL
+  
+  # convert into a data frame
+  wtm<-as.data.frame(wtm)
+  wtm
+}
+```
+
+Now that the function is created we can convert the entire dictionary into a word letter matrix
+
+```{r }
+# Use the WordLetterMatrix function defined above to create a word letter matrix
+dict_mat<-WordLetterMatrix(dict,charctrs)
+
+# Create a sum of characters for each row. If the sum of a specific number of columns match this number, then it indicates that full word can be formed using those columns
+dict_mat$sum<-rowSums(dict_mat)
+
+#Check if it meets the expectation
+head(dict_mat)
+```
+
+## Part 2 - Create All required Functions ##
+
+First we create a function to check and Count Blanks given by user. For this purpose a blank can be "" or " ".
+```{r }
+countblanks<- function (input){
+  # Check logically if the user provided inputs have blanks
+  checkblanks<-sapply(input, function(x) x=="" | x==" ")
+  
+  # Count the number of "TRUE" responses from above function to get the number of blanks
+  blanks<-sum(checkblanks*1)
+  blanks
+}
+```
+
+
+Now we have to identify the user given letter and number of occurances of these letters in the format of a matrix. Later, we would check dictionary matrix against this one to filter out words that use more character counts that what is indicated above. For example: If a word in a dictionary uses 3 "b"s, based on this matrix we will know that user has given us only 2 "b"s as input and we will be able to filter out that word from our output
+
+```{r }
+identify.letters<-function (input,charctrs){
+  # create a word letter matrix out of the user provided letters
+  inputmat<-WordLetterMatrix(input,charctrs)
+  
+  # From input matrix filter for just columns that are greater than 0
+  test<-as.matrix(subset(colSums(inputmat),colSums(inputmat)>0))
+  
+  #Transpose the resulting matrix. 
+  test<-as.data.frame(t(test))
+  test
+}
+```
+
+Now since we have could have duplicate characters in the input, extract unqiue letter in user input and extract those columns from the dictinary matrix
+
+```{r }
+extract.words.frm.dictionary<- function(input,dict_mat,charctrs,blanks){
+  input<-unique(input)
+  
+  # Consider only those that are already defined in our character list. Any external character not used in dictionary will be omitted. Blanks will also be omitted at this stage
+  validated_input<-input[input %in% charctrs]
+  
+  # From the dictionary matrix, extract just those character columns that have been given by the user
+  dict_usr_mat<-as.data.frame(dict_mat[validated_input],col.names = validated_input)
+  
+  # For these columns, filter if they dont meet any of the below conditions
+  
+  # 1. If it is an entire word  - checked by counting the sum of that extracted column row and comparing with the entire word sum in the dictionary that was calculated earlier
+  
+  # 2. If the number of blanks (that user has given) can make it a full word
+  
+  
+  dict_usr_mat<-dict_usr_mat[rowSums(dict_usr_mat) == (dict_mat$sum) | rowSums(dict_usr_mat) == (dict_mat$sum - blanks),,drop =F]
+  dict_usr_mat
+}
+```
+
+Now as a last step, we need to make sure that the characters used in the word do not exceed what has been given by the user. Here we would use the matrix "test" that was created earlier
+
+```{r }
+filter.out.words<-function(test,dict_usr_mat){
+  # Repeat the single row of test into as many rows as dict_usr_mat has so that we can perform operations on it
+  test<-test[rep(seq_len(nrow(test)), nrow(dict_usr_mat)), ]
+  
+  # Create a new data frame by subtracting each element in test matrix by the dict_usr_mat matrix. The resulting matrix items with any negative number is what we need to remove
+  output<-as.data.frame(row.names= row.names(dict_usr_mat),
+                        lapply(names(dict_usr_mat),
+                               function(name) test[name] - dict_usr_mat[name]))
+  
+  # Filter out the rows that have any negative value in any column
+  output<-rownames(output[rowSums(output >= 0) == ncol(output),,drop=F])
+  output
+}
+```
+
+
+Now that we have created all required functions, simply loop the required file through all the entries provided by the user
+
+## Part 3 - Running functions and printing output to text file  ##
+```{r }
+setwd("~/Documents/UCD/BA Prac/DM") #Change to the required directory
+userfile<-readLines(con<-file("test.txt", encoding = "UTF-8")) #Change to required filename.txt
+
+for (i in c(1:length(userfile))){
+  input<-sapply(userfile, function(x) strsplit(x,"")[[1]])[i]
+  blanks<-countblanks(input)
+  letters<-identify.letters(userfile[i],charctrs)
+  dict.words<-extract.words.frm.dictionary(unlist(input),dict_mat,charctrs,blanks)
+  output<-filter.out.words(letters,dict.words)
+
+  # Save into a txt as required
+cat(sprintf("There are %s dictionary words that can be created using your tiles %s",length(output),input),"They are :",output,sep="\n", file= paste('output_',i,'.txt'))
+}
+```
